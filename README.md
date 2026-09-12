@@ -18,4 +18,4 @@ Template repository for scheduled Rust bots running on GitHub Actions.
 - `cargo fmt --all -- --check`
 - `cargo check --tests --benches`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test`
+- `cargo nextest run --no-tests=pass`
