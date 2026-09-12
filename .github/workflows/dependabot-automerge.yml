@@ -1,0 +1,133 @@
+name: Dependabot Automerge
+
+# This privileged trigger never checks out or executes pull-request code.
+# It runs only for same-repository Dependabot pull requests and is audited by
+# .github/zizmor.yml; its narrow dangerous-trigger exception is intentional.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: dependabot-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    if: >-
+      (github.event.pull_request.user.login == 'dependabot[bot]' ||
+      github.event.pull_request.user.login == 'app/dependabot') &&
+      github.repository == github.event.pull_request.head.repo.full_name
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify Dependabot pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq '.author.login')"
+          if [ "$author" != "app/dependabot" ] && [ "$author" != "dependabot[bot]" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          head_sha="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')"
+          echo "head-sha=$head_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Read Dependabot metadata
+        id: metadata
+        if: steps.pr.outputs.skip != 'true'
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
+        with:
+          github-token: ${{ github.token }}
+          pull-request-number: ${{ github.event.pull_request.number }}
+
+      - name: Require patch or minor dependency update
+        id: policy
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          set -euo pipefail
+
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor)
+              echo "safe=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "safe=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Wait for successful checks
+        id: checks
+        if: steps.pr.outputs.skip != 'true' && steps.policy.outputs.safe == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
+        run: |
+          set -euo pipefail
+
+          for _ in $(seq 1 40); do
+            current_head_sha="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')"
+            if [ "$current_head_sha" != "$EXPECTED_HEAD_SHA" ]; then
+              echo "Pull request head changed; waiting for the new workflow run."
+              exit 0
+            fi
+
+            # shellcheck disable=SC2016
+            state="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json statusCheckRollup --jq '
+              [.statusCheckRollup[] | select(.workflowName != "Dependabot Automerge")] as $checks |
+              if ($checks | length) == 0 then
+                "pending"
+              elif ([$checks[] | select((.status != null and .status != "COMPLETED"))] | length) > 0 then
+                "pending"
+              elif ([$checks[] | select((.conclusion != null and (.conclusion != "SUCCESS" and .conclusion != "SKIPPED" and .conclusion != "NEUTRAL")) or (.state != null and .state != "SUCCESS"))] | length) > 0 then
+                "failed"
+              else
+                "passed"
+              end
+            ')"
+
+            case "$state" in
+              passed)
+                echo "passed=true" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              failed)
+                echo "Checks are not green; leaving the Dependabot PR open."
+                echo "passed=false" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+
+            sleep 15
+          done
+
+          echo "Checks did not finish before timeout; leaving the Dependabot PR open."
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Merge Dependabot pull request
+        if: steps.pr.outputs.skip != 'true' && steps.policy.outputs.safe == 'true' && steps.checks.outputs.passed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
+        run: |
+          set -euo pipefail
+
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch --match-head-commit "$EXPECTED_HEAD_SHA"
