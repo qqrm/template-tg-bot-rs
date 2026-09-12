@@ -3,7 +3,8 @@
 Template repository for scheduled Rust bots running on GitHub Actions.
 
 ## Included
-- CI workflow (`.github/workflows/ci.yml`)
+- CI workflow with dependency checks (`.github/workflows/ci.yml`)
+- GitHub Actions security workflow with actionlint and Zizmor (`.github/workflows/workflow-security.yml`)
 - Scheduled bot runner (`.github/workflows/run-bot.yml`)
 - Keepalive workflow to maintain repository activity (`.github/workflows/keepalive.yml`)
 - Codex cleanup workflow (`.github/workflows/codex-cleanup.yml`)
@@ -19,3 +20,9 @@ Template repository for scheduled Rust bots running on GitHub Actions.
 - `cargo check --tests --benches`
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo nextest run --no-tests=pass`
+- `cargo audit`
+- `cargo deny check advisories bans sources`
+- `cargo machete`
+
+Before publishing a derived project, choose and declare its license. License
+enforcement is intentionally not enabled by the template's `cargo-deny` policy.
