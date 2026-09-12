@@ -34,5 +34,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test
-        run: cargo test
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2.87.11
+        with:
+          tool: cargo-nextest
+          fallback: none
+
+      - name: Test with nextest
+        run: cargo nextest run --no-tests=pass
