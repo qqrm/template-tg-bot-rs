@@ -1,0 +1,41 @@
+name: Set up verified release binary
+description: Download the published Rust bot binary and verify its delivery manifest before execution.
+
+runs:
+  using: composite
+  steps:
+    - name: Download and verify release assets
+      shell: bash
+      env:
+        REPOSITORY: ${{ github.repository }}
+        BINARY_NAME: rust-serverless-bot-template
+      run: |
+        set -euo pipefail
+
+        # The release workflow publishes a protocol 2 manifest together with
+        # the binary. Never execute an older release while a new one is being
+        # built: the retry loop fails closed instead.
+        deadline=$((SECONDS + 900))
+        while :; do
+          if curl --fail --silent --show-error -L -o "$BINARY_NAME" \
+              "https://github.com/${REPOSITORY}/releases/latest/download/$BINARY_NAME" &&
+             curl --fail --silent --show-error -L -o delivery-manifest.json \
+              "https://github.com/${REPOSITORY}/releases/latest/download/delivery-manifest.json" &&
+             [ "$(jq -r '.protocol // 0' delivery-manifest.json 2>/dev/null)" = 2 ]; then
+            break
+          fi
+          if (( SECONDS >= deadline )); then
+            echo "::error::Latest release has no Rust-native delivery manifest (protocol 2); refusing to run."
+            exit 1
+          fi
+          sleep 30
+        done
+
+        expected="$(jq -r '.sha256' delivery-manifest.json)"
+        actual="$(sha256sum "$BINARY_NAME" | cut -d' ' -f1)"
+        if [ "$expected" != "$actual" ]; then
+          echo "::error::Release binary hash does not match the delivery manifest."
+          exit 1
+        fi
+
+        chmod +x "$BINARY_NAME"
