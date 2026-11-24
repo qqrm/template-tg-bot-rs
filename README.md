@@ -14,8 +14,29 @@ both gates, keep the branch up to date, and enable native auto-merge.
 ## Included
 - CI workflow with dependency checks (`.github/workflows/ci.yml`)
 - GitHub Actions security workflow with actionlint and Zizmor (`.github/workflows/workflow-security.yml`)
+- Release workflow that builds the binary once (`.github/workflows/release.yml`)
+- Verified release-binary setup action (`.github/actions/setup-release-binary`)
 - Scheduled bot runner (`.github/workflows/run-bot.yml`)
 - Keepalive workflow to maintain repository activity (`.github/workflows/keepalive.yml`)
+
+## Release and runtime model
+
+This template follows a build-once, run-many pattern:
+
+1. `release.yml` builds `cargo build --release --locked` when source, dependency
+   or toolchain files change on `main`. It publishes the executable and a
+   `delivery-manifest.json` to the `latest` release. The manifest records the
+   protocol version (`2`), the source commit SHA and the binary's SHA-256.
+2. `run-bot.yml` never compiles. It uses `setup-release-binary` to download the
+   published binary and manifest, waits for a protocol 2 manifest while a new
+   release is being built, verifies the SHA-256 with system tools, and then
+   executes the binary directly.
+3. A missing or stale manifest fails closed: the runner does not execute an
+   older release during the cutover window.
+
+When adapting the template, rename `BINARY_NAME` in both `release.yml` and
+`setup-release-binary/action.yml` to match your crate name. Keep the manifest
+version unchanged unless you deliberately change the protocol.
 
 ## Usage
 1. Create a repository from this template.

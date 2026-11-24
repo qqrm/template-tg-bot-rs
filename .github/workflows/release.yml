@@ -1,0 +1,76 @@
+name: Release Binary
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/actions/setup-release-binary/action.yml'
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact checked commit requested by the publication controller
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-binary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Verify publication commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPECTED_SHA" ]; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Build release
+        run: cargo build --release --locked --quiet
+
+      - name: Publish binary to latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_SHA: ${{ github.sha }}
+          BINARY_NAME: rust-serverless-bot-template
+        run: |
+          set -euo pipefail
+
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest --title latest --notes "Automated latest build"
+          fi
+
+          binary="target/release/$BINARY_NAME"
+          sha256="$(sha256sum "$binary" | cut -d' ' -f1)"
+          jq -n --arg sha256 "$sha256" --arg source_sha "$GITHUB_SHA" \
+            '{protocol: 2, sha256: $sha256, source_sha: $source_sha}' \
+            > delivery-manifest.json
+
+          gh release upload latest "$binary" --clobber
+          gh release upload latest delivery-manifest.json --clobber
