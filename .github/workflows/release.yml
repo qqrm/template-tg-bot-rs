@@ -3,12 +3,6 @@ name: Release Binary
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - '.github/actions/setup-release-binary/action.yml'
   workflow_dispatch:
     inputs:
       expected_sha:
