@@ -12,7 +12,7 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 manifest="$tmp_dir/delivery-manifest.json"
 binary="$tmp_dir/$binary_name"
-base_url="https://github.com/$repository/releases/latest/download"
+base_url="https://github.com/$repository/releases/download/delivery-$source_sha"
 download() {
   curl --fail --silent --show-error --location --max-time 20 -o "$1" "$2"
 }
@@ -35,7 +35,7 @@ while :; do
       exit 0
     fi
   fi
-  # The mutable latest assets can temporarily disagree during publication.
+  # A commit-specific release may not yet be visible during publication.
   remaining=$((deadline - SECONDS))
   if (( remaining <= 0 )); then
     echo "::error::No verified release binary for source_sha=$source_sha; refusing to run." >&2
