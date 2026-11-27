@@ -1,0 +1,102 @@
+name: Release Binary
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact checked commit requested by the publication controller
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-binary-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Verify publication commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPECTED_SHA" ]; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check for existing commit release
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="delivery-$GITHUB_SHA"
+          if draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "$draft" != false ]]; then
+              echo "::error::Incomplete draft release $tag; inspect before retrying."
+              exit 1
+            fi
+            echo 'published=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'published=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Rust
+        if: steps.existing.outputs.published == 'false'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Build release
+        if: steps.existing.outputs.published == 'false'
+        run: cargo build --release --locked --quiet
+
+      - name: Publish commit-addressed release
+        if: steps.existing.outputs.published == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_SHA: ${{ github.sha }}
+          BINARY_NAME: rust-serverless-bot-template
+        run: |
+          set -euo pipefail
+
+          binary="target/release/$BINARY_NAME"
+          sha256="$(sha256sum "$binary" | cut -d' ' -f1)"
+          jq -n --arg sha256 "$sha256" --arg source_sha "$GITHUB_SHA" \
+            '{protocol: 2, sha256: $sha256, source_sha: $source_sha}' \
+            > delivery-manifest.json
+
+          tag="delivery-$GITHUB_SHA"
+          gh release create "$tag" "$binary" delivery-manifest.json \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "$tag" --notes "Automated delivery binary for $GITHUB_SHA"
+
+      - name: Verify published delivery without executing it
+        env:
+          REPOSITORY: ${{ github.repository }}
+          BINARY_NAME: rust-serverless-bot-template
+          RELEASE_WAIT_SECONDS: '90'
+        run: |
+          set -euo pipefail
+          setup="$PWD/.github/actions/setup-release-binary/setup.sh"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          cd "$work"
+          bash "$setup" "$REPOSITORY" "$BINARY_NAME" "$GITHUB_SHA"
+          test -x "$BINARY_NAME"

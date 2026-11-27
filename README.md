@@ -19,8 +19,34 @@ both gates, keep the branch up to date, and enable native auto-merge.
 ## Included
 - CI workflow with dependency checks (`.github/workflows/ci.yml`)
 - GitHub Actions security workflow with actionlint and Zizmor (`.github/workflows/workflow-security.yml`)
+- Release workflow that builds the binary once (`.github/workflows/release.yml`)
+- Verified release-binary setup action (`.github/actions/setup-release-binary`)
 - Scheduled bot runner (`.github/workflows/run-bot.yml`)
 - Keepalive workflow to maintain repository activity (`.github/workflows/keepalive.yml`)
+
+## Release and runtime model
+
+This template follows a build-once, run-many pattern:
+
+1. `release.yml` builds `cargo build --release --locked` for every push to
+   `main` (and manual dispatch on main). It publishes a prerelease tagged
+   `delivery-<source_sha>` with the executable and protocol 2
+   `delivery-manifest.json`. Existing published commit releases are verified,
+   not overwritten; builds for different commits do not cancel each other.
+2. `run-bot.yml` never compiles. It selects the release by the exact checked-out
+   SHA, then verifies protocol, source SHA and binary SHA-256 before installing.
+   It waits for publication and fails closed if that exact release is missing.
+3. The publisher verifies the downloaded assets without executing the bot.
+   A newer release cannot displace the binary for an older in-flight checkout.
+
+The old mutable `latest` release is not used by new runners. Commit releases
+are retained for historical runs; remove obsolete generated releases only after
+their possible delivery/re-run window has elapsed. An incomplete draft requires
+inspection before retrying. No automatic deletion is enabled.
+
+When adapting the template, rename `BINARY_NAME` in both `release.yml` and
+`setup-release-binary/action.yml` to match your crate name. Keep the manifest
+version unchanged unless you deliberately change the protocol.
 
 ## Usage
 1. Create a repository from this template.

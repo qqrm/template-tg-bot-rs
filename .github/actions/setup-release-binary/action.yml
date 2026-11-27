@@ -1,0 +1,14 @@
+name: Set up verified release binary
+description: Download the published Rust bot binary and verify its delivery manifest before execution.
+
+runs:
+  using: composite
+  steps:
+    - name: Download and verify release assets
+      shell: bash
+      env:
+        REPOSITORY: ${{ github.repository }}
+        BINARY_NAME: rust-serverless-bot-template
+      run: |
+        set -euo pipefail
+        bash "$GITHUB_ACTION_PATH/setup.sh" "$REPOSITORY" "$BINARY_NAME" "$(git rev-parse HEAD)"

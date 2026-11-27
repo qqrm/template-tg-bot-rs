@@ -2,6 +2,11 @@
 name = "rust-serverless-bot-template"
 version = "0.1.0"
 edition = "2024"
+default-run = "rust-serverless-bot-template"
 
 [dependencies]
 anyhow = "1.0"
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
